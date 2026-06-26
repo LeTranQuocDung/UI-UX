@@ -18,7 +18,8 @@ const APP = {
     unlockedBadges: new Set(JSON.parse(localStorage.getItem('unlocked_badges')) || []),
     activeItineraryDay: 1, // Currently viewed day in itinerary tab
     currentLang: 'vi', // vi, en
-    activeExploreCategory: 'all'
+    activeExploreCategory: 'all',
+    activePresetType: 'standard'
   },
 
   map: null,
@@ -40,6 +41,9 @@ const APP = {
       preferences: document.getElementById('screen-preferences'),
       tripDetails: document.getElementById('screen-trip-details'),
       itinerary: document.getElementById('screen-itinerary'),
+      itineraryCheckin: document.getElementById('screen-itinerary-checkin'),
+      itineraryCuisine: document.getElementById('screen-itinerary-cuisine'),
+      itineraryCombo: document.getElementById('screen-itinerary-combo'),
       chatbot: document.getElementById('screen-chatbot'),
       ar: document.getElementById('screen-ar')
     };
@@ -78,11 +82,10 @@ const APP = {
   navigateTo: function(screenId) {
     console.log(`Navigating to screen: ${screenId}`);
     
-    // Hide all screens by removing active class
-    Object.values(this.screens).forEach(screen => {
-      if (screen) {
-        screen.classList.remove('active');
-      }
+    // Hide all screens by removing active class from registered screens and any known screen elements
+    const allScreenElements = document.querySelectorAll('.app-screen');
+    allScreenElements.forEach(screen => {
+      screen.classList.remove('active');
     });
 
     // Show active screen by adding active class
@@ -230,8 +233,9 @@ const APP = {
 
     // 4. Itinerary Day Tabs
     document.addEventListener('click', (e) => {
-      if (e.target && e.target.classList.contains('day-tab-btn')) {
-        const day = parseInt(e.target.dataset.day);
+      const dayBtn = e.target.closest('.day-tab-btn');
+      if (dayBtn) {
+        const day = parseInt(dayBtn.dataset.day, 10);
         this.switchItineraryDay(day);
       }
     });
@@ -306,6 +310,19 @@ const APP = {
     // Detail Modal Close
     document.getElementById('btn-detail-close')?.addEventListener('click', () => {
       document.getElementById('spot-detail-modal').classList.remove('active');
+    });
+
+    // Preset itinerary screen back buttons
+    document.getElementById('btn-back-to-home-checkin')?.addEventListener('click', () => this.navigateTo('screen-onboarding'));
+    document.getElementById('btn-back-to-home-cuisine')?.addEventListener('click', () => this.navigateTo('screen-onboarding'));
+    document.getElementById('btn-back-to-home-combo')?.addEventListener('click', () => this.navigateTo('screen-onboarding'));
+
+    // Home preset itinerary buttons
+    document.querySelectorAll('.preset-plan-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const type = btn.dataset.presetType;
+        this.loadPrebuiltItinerary(type);
+      });
     });
 
     // AR Mode Screen handlers
@@ -578,11 +595,42 @@ const APP = {
   },
 
   // Render Itinerary Visual Elements (timeline details, stats)
+  updateItineraryPresetBanner: function() {
+    const titleEl = document.getElementById('itinerary-plan-title');
+    const subtitleEl = document.getElementById('itinerary-plan-subtitle');
+    if (!titleEl || !subtitleEl) return;
+
+    const presets = {
+      checkin: {
+        title: 'Lịch trình Check-in',
+        subtitle: 'Điểm chụp hình đẹp nhất Gia Lai'
+      },
+      cuisine: {
+        title: 'Lịch trình Ẩm thực',
+        subtitle: 'Quán ăn, đặc sản và cà phê nổi tiếng'
+      },
+      combo: {
+        title: 'Lịch trình Combo',
+        subtitle: 'Kết hợp check-in và ẩm thực'
+      },
+      standard: {
+        title: 'Lịch trình chuẩn',
+        subtitle: 'Kết hợp nhiều trải nghiệm du lịch'
+      }
+    };
+
+    const preset = presets[this.state.activePresetType] || presets.standard;
+    titleEl.innerText = preset.title;
+    subtitleEl.innerText = preset.subtitle;
+  },
+
   renderItineraryTimeline: function() {
     const container = document.getElementById('itinerary-days-container');
     const timelineContainer = document.getElementById('timeline-list');
     
     if (!container || !timelineContainer) return;
+
+    this.updateItineraryPresetBanner();
 
     container.innerHTML = '';
     timelineContainer.innerHTML = '';
@@ -677,7 +725,7 @@ const APP = {
     this.state.activeItineraryDay = day;
     this.renderItineraryTimeline();
     
-    // Zoom/Center map to day's active locations
+    // Zoom/Center map to day's active locations and refresh map route
     if (this.map) {
       const spotsPerDay = 3;
       const dayStartIndex = (day - 1) * spotsPerDay;
@@ -686,6 +734,7 @@ const APP = {
         const bounds = L.latLngBounds(daySpots.map(s => s.coordinates));
         this.map.fitBounds(bounds, { padding: [50, 50] });
       }
+      this.updateMapRoute();
     }
   },
 
@@ -801,9 +850,13 @@ const APP = {
     // Get spots for the active day to render routing polyline
     const spotsPerDay = 3;
     const dayStartIndex = (this.state.activeItineraryDay - 1) * spotsPerDay;
-    const daySpots = this.state.itinerary.slice(dayStartIndex, dayStartIndex + spotsPerDay);
+    let daySpots = this.state.itinerary.slice(dayStartIndex, dayStartIndex + spotsPerDay);
 
-    if (daySpots.length === 0) return;
+    // If the selected day has no assigned spots yet, show a random subset of available spots
+    if (daySpots.length === 0) {
+      const shuffled = [...GIA_LAI_DATA.spots].sort(() => Math.random() - 0.5);
+      daySpots = shuffled.slice(0, Math.min(spotsPerDay, shuffled.length));
+    }
 
     const latlngs = [];
 
@@ -1329,7 +1382,10 @@ const APP = {
   },
 
   loadPrebuiltItinerary: function(type = 'standard') {
-    const ids = ['bien-ho', 'chua-minh-thanh', 'cho-dem-pleiku', 'chu-dang-ya', 'lang-op', 'ca-phe-thu-ha', 'thac-phu-cuong', 'hang-thong-tram-tuoi', 'quan-pho-hong'];
+    this.state.activePresetType = type;
+    const preset = this.getPresetPlan(type);
+
+    const ids = preset.days.flat();
     const selected = [];
     ids.forEach(id => {
       const spot = GIA_LAI_DATA.spots.find(s => s.id === id);
@@ -1356,10 +1412,24 @@ const APP = {
     };
     
     this.state.activeItineraryDay = 1;
+    this.renderPresetScreen(type);
     this.renderItineraryTimeline();
     
     // Auto center map and update
-    this.navigateTo('screen-itinerary');
+    if (this.map) {
+      this.updateMapRoute();
+    }
+
+    if (type === 'checkin') {
+      this.navigateTo('screen-itinerary-checkin');
+    } else if (type === 'cuisine') {
+      this.navigateTo('screen-itinerary-cuisine');
+    } else if (type === 'combo') {
+      this.navigateTo('screen-itinerary-combo');
+    } else {
+      this.navigateTo('screen-itinerary');
+    }
+
     this.showToast('Đã tải lịch trình 3 ngày đề xuất!');
     this.triggerConfetti();
   }
@@ -1369,3 +1439,11 @@ const APP = {
 window.addEventListener('DOMContentLoaded', () => {
   APP.init();
 });
+
+window.APP = APP;
+
+window.selectPresetPlan = function(type) {
+  if (typeof APP !== 'undefined' && APP && typeof APP.loadPrebuiltItinerary === 'function') {
+    APP.loadPrebuiltItinerary(type);
+  }
+};
